@@ -395,6 +395,7 @@ class FallTemplateBot2026(ForecastBot):
             (d) The expectations of experts and markets.
             (e) A brief description of an unexpected scenario that results in a low outcome.
             (f) A brief description of an unexpected scenario that results in a high outcome.
+            (g) The probability that the outcome is above the upper bound of the question range, and the probability that it is below the lower bound. Then check that your percentiles match these probabilities: for example, if there is a 70% chance the outcome is above the upper bound, then Percentile 40 and every higher percentile must be above the upper bound.
 
             {self._get_conditional_disclaimer_if_necessary(question)}
             You remind yourself that good forecasters are humble and set wide 90/10 confidence intervals to account for unknown unknowns.
@@ -430,6 +431,7 @@ class FallTemplateBot2026(ForecastBot):
             - Your work will be shown publicly with these units stated verbatim after the numbers your parse.
             - As an example, someone else guessed that the answer will be between {question.lower_bound} {question.unit_of_measure} and {question.upper_bound} {question.unit_of_measure}, so the numbers parsed from an answer like this would be verbatim "{question.lower_bound}" and "{question.upper_bound}".
             - If the answer doesn't give the answer in the correct units, you should parse it in the right units. For instance if the answer gives numbers as $500,000,000 and units are "B $" then you should parse the answer as 0.5 (since $500,000,000 is $0.5 billion).
+            - Values outside the question range (above the upper bound or below the lower bound) are valid. Parse them exactly as written, never clip them to the bounds.
             - If percentiles are not explicitly given (e.g. only a single value is given) please don't return a parsed output, but rather indicate that the answer is not explicitly given in the text.
             - Turn any values that are in scientific notation into regular numbers.
             """
@@ -490,6 +492,7 @@ class FallTemplateBot2026(ForecastBot):
             (d) The expectations of experts and markets.
             (e) A brief description of an unexpected scenario that results in a low outcome.
             (f) A brief description of an unexpected scenario that results in a high outcome.
+            (g) The probability that the outcome is above the upper bound of the question range, and the probability that it is below the lower bound. Then check that your percentiles match these probabilities: for example, if there is a 70% chance the outcome is above the upper bound, then Percentile 40 and every higher percentile must be above the upper bound.
 
             {self._get_conditional_disclaimer_if_necessary(question)}
             You remind yourself that good forecasters are humble and set wide 90/10 confidence intervals to account for unknown unknowns.
@@ -523,6 +526,7 @@ class FallTemplateBot2026(ForecastBot):
             {self._create_resolved_question_parsing_message()}
             - As an example, someone else guessed that the answer will be between {question.lower_bound} and {question.upper_bound}, so the numbers parsed from an answer like this would be verbatim "{question.lower_bound}" and "{question.upper_bound}".
             - The output is given as dates/times please format it into a valid datetime parsable string. Assume midnight UTC if no hour is given.
+            - Values outside the question range (above the upper bound or below the lower bound) are valid. Parse them exactly as written, never clip them to the bounds.
             - If percentiles are not explicitly given (e.g. only a single value is given) please don't return a parsed output, but rather indicate that the answer is not explicitly given in the text.
             """
         )
@@ -585,15 +589,32 @@ class FallTemplateBot2026(ForecastBot):
         else:
             raise ValueError()
 
+        upper_text = f"{upper_bound_number} {unit_of_measure}".strip()
+        lower_text = f"{lower_bound_number} {unit_of_measure}".strip()
+
         if question.open_upper_bound:
-            upper_bound_message = f"The question creator thinks the number is likely not higher than {upper_bound_number} {unit_of_measure}."
+            # DOR-1: the old wording ("likely not higher than") made the model
+            # pile its upper percentiles exactly on the bound.
+            upper_bound_message = (
+                f"The question range ends at {upper_text}, but the upper bound is OPEN: "
+                f"outcomes above {upper_text} are possible and valid. "
+                f"If you think the outcome is likely above {upper_text}, "
+                f"your higher percentiles MUST also be above it, at the values where you actually expect the outcome "
+                f"(not at {upper_bound_number} itself or just one step above it)."
+            )
         else:
-            upper_bound_message = f"The outcome can not be higher than {upper_bound_number} {unit_of_measure}."
+            upper_bound_message = f"The outcome can not be higher than {upper_text}."
 
         if question.open_lower_bound:
-            lower_bound_message = f"The question creator thinks the number is likely not lower than {lower_bound_number} {unit_of_measure}."
+            lower_bound_message = (
+                f"The question range starts at {lower_text}, but the lower bound is OPEN: "
+                f"outcomes below {lower_text} are possible and valid. "
+                f"If you think the outcome is likely below {lower_text}, "
+                f"your lower percentiles MUST also be below it, at the values where you actually expect the outcome "
+                f"(not at {lower_bound_number} itself or just one step below it)."
+            )
         else:
-            lower_bound_message = f"The outcome can not be lower than {lower_bound_number} {unit_of_measure}."
+            lower_bound_message = f"The outcome can not be lower than {lower_text}."
         return upper_bound_message, lower_bound_message
 
     ##################################### CONDITIONAL QUESTIONS #####################################
