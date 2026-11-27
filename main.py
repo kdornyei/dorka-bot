@@ -36,6 +36,7 @@ from forecasting_tools import (
     BinaryPrediction,
     PredictedOptionList,
     ReasonedPrediction,
+    RefreshingBucketRateLimiter,
     SmartSearcher,
     clean_indents,
     structure_output,
@@ -124,7 +125,23 @@ class FallTemplateBot2026(ForecastBot):
         1  # Set this to whatever works for your search-provider/ai-model rate limits
     )
     _concurrency_limiter = asyncio.Semaphore(_max_concurrent_questions)
+
+    # DOR-3: rate limit for the "default" (forecasting) LLM calls.
+    # The OpenRouter account currently allows 20 requests per minute for this
+    # model. In any 60 s window at most capacity + refresh_rate * 60 requests
+    # can start: 3 + 0.25 * 60 = 18, which leaves some headroom under 20.
+    # If the account limit is raised, increase these numbers (or remove the
+    # limiter by making _invoke_default_llm call the llm directly).
+    _default_llm_rate_limiter = RefreshingBucketRateLimiter(
+        capacity=3,
+        refresh_rate=0.25,  # requests per second (15 per minute)
+    )
     _structure_output_validation_samples = 2
+
+    async def _invoke_default_llm(self, prompt: str) -> str:
+        # Waits for free capacity before every forecasting call (see DOR-3).
+        await self._default_llm_rate_limiter.wait_till_able_to_acquire_resources(1)
+        return await self.get_llm("default", "llm").invoke(prompt)
 
     ##################################### RESEARCH #####################################
 
@@ -235,7 +252,7 @@ class FallTemplateBot2026(ForecastBot):
         question: BinaryQuestion,
         prompt: str,
     ) -> ReasonedPrediction[float]:
-        reasoning = await self.get_llm("default", "llm").invoke(prompt)
+        reasoning = await self._invoke_default_llm(prompt)
         logger.info(f"Reasoning for URL {question.page_url}: {reasoning}")
         parsing_instructions = clean_indents(
             f"""
@@ -317,7 +334,7 @@ class FallTemplateBot2026(ForecastBot):
             {self._create_resolved_question_parsing_message()}
             """
         )
-        reasoning = await self.get_llm("default", "llm").invoke(prompt)
+        reasoning = await self._invoke_default_llm(prompt)
         logger.info(f"Reasoning for URL {question.page_url}: {reasoning}")
         predicted_option_list: PredictedOptionList = await structure_output(
             text_to_structure=reasoning,
@@ -400,7 +417,7 @@ class FallTemplateBot2026(ForecastBot):
         question: NumericQuestion,
         prompt: str,
     ) -> ReasonedPrediction[NumericDistribution]:
-        reasoning = await self.get_llm("default", "llm").invoke(prompt)
+        reasoning = await self._invoke_default_llm(prompt)
         logger.info(f"Reasoning for URL {question.page_url}: {reasoning}")
         parsing_instructions = clean_indents(
             f"""
@@ -496,7 +513,7 @@ class FallTemplateBot2026(ForecastBot):
         question: DateQuestion,
         prompt: str,
     ) -> ReasonedPrediction[NumericDistribution]:
-        reasoning = await self.get_llm("default", "llm").invoke(prompt)
+        reasoning = await self._invoke_default_llm(prompt)
         logger.info(f"Reasoning for URL {question.page_url}: {reasoning}")
         parsing_instructions = clean_indents(
             f"""
@@ -720,7 +737,7 @@ if __name__ == "__main__":
                 model="openrouter/google/gemini-3.7-flash",
                 temperature=0.3,
                 timeout=120,
-                allowed_tries=2,
+                allowed_tries=5,  # DOR-3: more retries (with backoff) for 429 errors
             ),
             "summarizer": "openrouter/openai/gpt-4o-mini",
             "researcher": "openrouter/perplexity/sonar",
