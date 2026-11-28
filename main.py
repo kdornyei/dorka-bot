@@ -545,11 +545,35 @@ class FallTemplateBot2026(ForecastBot):
             )
             for percentile in date_percentile_list
         ]
+        percentile_list = self._add_today_percentile(percentile_list, question)
         prediction = NumericDistribution.from_question(percentile_list, question)
         logger.info(
             f"Forecasted URL {question.page_url} with prediction: {prediction.declared_percentiles}."
         )
         return ReasonedPrediction(prediction_value=prediction, reasoning=reasoning)
+
+    # DOR-5: probability the bot may put on dates before today
+    _today_percentile = 0.01
+
+    def _add_today_percentile(
+        self, percentile_list: list[Percentile], question: DateQuestion
+    ) -> list[Percentile]:
+        # The library spreads the mass below the lowest percentile (usually P10)
+        # evenly from the range start. When the range starts in the past, about
+        # 10% of the forecast lands on dates that can no longer happen.
+        # Adding a point "1% by today" moves that mass between today and P10.
+        # Nothing is added if the range starts after today, or if the bot itself
+        # already put a percentile before today.
+        now = datetime.now(timezone.utc).timestamp()
+        if question.lower_bound.timestamp() >= now:
+            return percentile_list
+        if not percentile_list:
+            return percentile_list
+        lowest = min(percentile_list, key=lambda p: p.percentile)
+        if lowest.value <= now or lowest.percentile <= self._today_percentile:
+            return percentile_list
+        today_point = Percentile(percentile=self._today_percentile, value=now)
+        return sorted([today_point] + percentile_list, key=lambda p: p.percentile)
 
     def _create_resolved_question_parsing_message(self) -> str:
         return "- If the text concludes that the question has already resolved *in the past* (i.e. it treats the question as decided rather than something to forecast), please DO NOT return a parsed output, even if a final forecast is also given. Instead indicate that the answer is not explicitly given in the text.\n"
