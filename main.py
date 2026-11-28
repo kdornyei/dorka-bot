@@ -43,7 +43,11 @@ from forecasting_tools import (
 )
 
 dotenv.load_dotenv()
+from report_export import export_reports  # DOR-4
+
 logger = logging.getLogger(__name__)
+
+REPORTS_FOLDER = "reports"  # DOR-4: uploaded as a GitHub Actions artifact
 
 
 class FallTemplateBot2026(ForecastBot):
@@ -774,7 +778,7 @@ if __name__ == "__main__":
         predictions_per_research_report=5,
         use_research_summary_to_forecast=False,
         publish_reports_to_metaculus=publish_to_metaculus,
-        folder_to_save_reports_to=None,
+        folder_to_save_reports_to=REPORTS_FOLDER,  # DOR-4: raw JSON of each run
         skip_previously_forecasted_questions=True,
         extra_metadata_in_explanation=True,
         llms={
@@ -836,6 +840,10 @@ if __name__ == "__main__":
                 "bot-testing-area", return_exceptions=True
             )
         )
+
+    # DOR-4: readable CSV + HTML export (uploaded as a GitHub Actions artifact).
+    # Runs before log_report_summary, which may raise if a question failed.
+    export_reports(forecast_reports, REPORTS_FOLDER, run_mode)
 
     template_bot.log_report_summary(forecast_reports)
     print_run_summary_banner(
